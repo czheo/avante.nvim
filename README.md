@@ -7,11 +7,11 @@
   <a href="https://neovim.io/" target="_blank">
     <img src="https://img.shields.io/static/v1?style=flat-square&label=Neovim&message=v0.10%2b&logo=neovim&labelColor=282828&logoColor=8faa80&color=414b32" alt="Neovim: v0.10+" />
   </a>
-  <a href="https://github.com/yetone/avante.nvim/actions/workflows/ci.yaml" target="_blank">
-    <img src="https://img.shields.io/github/actions/workflow/status/yetone/avante.nvim/lua.yaml?style=flat-square&logo=lua&logoColor=c7c7c7&label=Lua+CI&labelColor=282828&color=347D39&event=push" alt="Lua CI status" />
+  <a href="https://github.com/yetone/avante.nvim/actions/workflows/lua.yaml" target="_blank">
+    <img src="https://img.shields.io/github/actions/workflow/status/yetone/avante.nvim/lua.yaml?style=flat-square&logo=lua&logoColor=c7c7c7&label=Lua+CI&labelColor=1E40AF&color=347D39&event=push" alt="Lua CI status" />
   </a>
-  <a href="https://github.com/yetone/avante.nvim/actions/workflows/ci.yaml" target="_blank">
-    <img src="https://img.shields.io/github/actions/workflow/status/yetone/avante.nvim/rust.yaml?style=flat-square&logo=rust&logoColor=c7c7c7&label=Rust+CI&labelColor=282828&color=347D39&event=push" alt="Rust CI status" />
+  <a href="https://github.com/yetone/avante.nvim/actions/workflows/rust.yaml" target="_blank">
+    <img src="https://img.shields.io/github/actions/workflow/status/yetone/avante.nvim/rust.yaml?style=flat-square&logo=rust&logoColor=ffffff&label=Rust+CI&labelColor=BC826A&color=347D39&event=push" alt="Rust CI status" />
   </a>
   <a href="https://discord.com/invite/wUuZz7VxXD" target="_blank">
     <img src="https://img.shields.io/discord/1302530866362323016?style=flat-square&logo=discord&label=Discord&logoColor=ffffff&labelColor=7376CF&color=268165" alt="Discord" />
@@ -391,6 +391,20 @@ The following key bindings are available for use with `avante.nvim`:
 >
 > If you are using `lazy.nvim`, then all keymap here will be safely set, meaning if `<leader>aa` is already binded, then avante.nvim won't bind this mapping.
 > In this case, user will be responsible for setting up their own. See [notes on keymaps](https://github.com/yetone/avante.nvim/wiki#keymaps-and-api-i-guess) for more details.
+
+## Commands
+
+| Command | Description | Examples
+|---------|-------------| ------------------
+| `:AvanteAsk [question] [position]` | Ask AI about your code. Optional `position` set window position and `ask` enable/disable direct asking mode | `:AvanteAsk position=right Refactor this code here`
+| `:AvanteBuild` | Build dependencies for the project |
+| `:AvanteChat` | Start a chat session with AI about your codebase. Default is `ask`=false |
+| `:AvanteEdit` | Edit the selected code blocks |
+| `:AvanteFocus` | Switch focus to/from the sidebar |
+| `:AvanteRefresh` | Refresh all Avante windows |
+| `:AvanteSwitchProvider` | Switch AI provider (e.g. openai) |
+| `:AvanteShowRepoMap` | Show repo map for project's structure |
+| `:AvanteToggle` | Toggle the Avante sidebar |
 
 ## Highlight Groups
 
