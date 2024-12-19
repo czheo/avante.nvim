@@ -189,6 +189,9 @@ M.defaults = {
       remove_file = "d",
       add_file = "@",
     },
+    files = {
+      add_current = "<leader>ac", -- Add current buffer to selected files
+    },
   },
   windows = {
     ---@alias AvantePosition "right" | "left" | "top" | "bottom" | "smart"
@@ -233,6 +236,13 @@ M.defaults = {
   repo_map = {
     ignore_patterns = { "%.git", "%.worktree", "__pycache__", "node_modules" }, -- ignore files matching these
     negate_patterns = {}, -- negate ignore files matching these.
+  },
+  --- @class AvanteFileSelectorConfig
+  file_selector = {
+    --- @alias FileSelectorProvider "native" | "fzf" | "telescope" | string
+    provider = "native",
+    -- Options override for custom providers
+    provider_opts = {},
   },
 }
 

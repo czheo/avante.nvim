@@ -755,25 +755,6 @@ function Sidebar:render_result()
   )
 end
 
-function Sidebar:get_file_icon(filepath)
-  local filetype = vim.filetype.match({ filename = filepath }) or "unknown"
-  ---@type string
-  local icon
-  ---@diagnostic disable-next-line: undefined-field
-  if _G.MiniIcons ~= nil then
-    ---@diagnostic disable-next-line: undefined-global
-    icon, _, _ = MiniIcons.get("filetype", filetype) -- luacheck: ignore
-  else
-    local ok, devicons = pcall(require, "nvim-web-devicons")
-    if ok then
-      icon = devicons.get_icon_by_filetype(filetype, {})
-    else
-      icon = ""
-    end
-  end
-  return icon
-end
-
 ---@param ask? boolean
 function Sidebar:render_input(ask)
   if ask == nil then ask = true end
@@ -844,6 +825,21 @@ end
 ---@param opts AskOptions
 function Sidebar:on_mount(opts)
   self:refresh_winids()
+
+  -- Add keymap to add current buffer while sidebar is open
+  if Config.mappings.files and Config.mappings.files.add_current then
+    vim.keymap.set("n", Config.mappings.files.add_current, function()
+      if self:is_open() and self.file_selector:add_current_buffer() then
+        vim.notify("Added current buffer to file selector", vim.log.levels.DEBUG, { title = "Avante" })
+      else
+        vim.notify("Failed to add current buffer", vim.log.levels.WARN, { title = "Avante" })
+      end
+    end, {
+      desc = "avante: add current buffer to file selector",
+      noremap = true,
+      silent = true,
+    })
+  end
 
   api.nvim_set_option_value("wrap", Config.windows.wrap, { win = self.result_container.winid })
 
@@ -1360,6 +1356,41 @@ function Sidebar:get_content_between_separators()
   return content, start_line
 end
 
+function Sidebar:clear_history(args, cb)
+  local chat_history = Path.history.load(self.code.bufnr)
+  if next(chat_history) ~= nil then
+    chat_history = {}
+    Path.history.save(self.code.bufnr, chat_history)
+    self:update_content("Chat history cleared", { focus = false, scroll = false })
+    if cb then cb(args) end
+  else
+    self:update_content("Chat history is already empty", { focus = false, scroll = false })
+  end
+end
+
+function Sidebar:reset_memory(args, cb)
+  local chat_history = Path.history.load(self.code.bufnr)
+  if next(chat_history) ~= nil then
+    table.insert(chat_history, {
+      timestamp = get_timestamp(),
+      provider = Config.provider,
+      model = Config.get_provider(Config.provider).model,
+      request = "",
+      response = "",
+      original_response = "",
+      selected_file = nil,
+      selected_code = nil,
+      reset_memory = true,
+    })
+    Path.history.save(self.code.bufnr, chat_history)
+    local history_content = self:render_history_content(chat_history)
+    self:update_content(history_content, { focus = false, scroll = true })
+    if cb then cb(args) end
+  else
+    self:update_content("Chat history is already empty", { focus = false, scroll = false })
+  end
+end
+
 ---@alias AvanteSlashCommandType "clear" | "help" | "lines" | "reset"
 ---@alias AvanteSlashCommandCallback fun(args: string, cb?: fun(args: string): nil): nil
 ---@alias AvanteSlashCommand {description: string, command: AvanteSlashCommandType, details: string, shorthelp?: string, callback?: AvanteSlashCommandCallback}
@@ -1394,39 +1425,8 @@ function Sidebar:get_commands()
       self:update_content(help_text, { focus = false, scroll = false })
       if cb then cb(args) end
     end,
-    clear = function(args, cb)
-      local chat_history = Path.history.load(self.code.bufnr)
-      if next(chat_history) ~= nil then
-        chat_history = {}
-        Path.history.save(self.code.bufnr, chat_history)
-        self:update_content("Chat history cleared", { focus = false, scroll = false })
-        if cb then cb(args) end
-      else
-        self:update_content("Chat history is already empty", { focus = false, scroll = false })
-      end
-    end,
-    reset = function(args, cb)
-      local chat_history = Path.history.load(self.code.bufnr)
-      if next(chat_history) ~= nil then
-        table.insert(chat_history, {
-          timestamp = get_timestamp(),
-          provider = Config.provider,
-          model = Config.get_provider(Config.provider).model,
-          request = "",
-          response = "",
-          original_response = "",
-          selected_file = nil,
-          selected_code = nil,
-          reset_memory = true,
-        })
-        Path.history.save(self.code.bufnr, chat_history)
-        local history_content = self:render_history_content(chat_history)
-        self:update_content(history_content, { focus = false, scroll = true })
-        if cb then cb(args) end
-      else
-        self:update_content("Chat history is already empty", { focus = false, scroll = false })
-      end
-    end,
+    clear = function(args, cb) self:clear_history(args, cb) end,
+    reset = function(args, cb) self:reset_memory(args, cb) end,
     lines = function(args, cb)
       if cb then cb(args) end
     end,
@@ -1492,6 +1492,74 @@ function Sidebar:create_input_container(opts)
   local chat_history = Path.history.load(self.code.bufnr)
 
   ---@param request string
+  ---@return GeneratePromptsOptions
+  local function get_generate_prompts_options(request)
+    local filetype = api.nvim_get_option_value("filetype", { buf = self.code.bufnr })
+
+    local selected_code_content = nil
+    if self.code.selection ~= nil then selected_code_content = self.code.selection.content end
+
+    local mentions = Utils.extract_mentions(request)
+    request = mentions.new_content
+
+    local file_ext = api.nvim_buf_get_name(self.code.bufnr):match("^.+%.(.+)$")
+
+    local project_context = mentions.enable_project_context and RepoMap.get_repo_map(file_ext) or nil
+
+    local selected_files_contents = self.file_selector:get_selected_files_contents()
+
+    local diagnostics = nil
+    if mentions.enable_diagnostics then
+      if self.code ~= nil and self.code.bufnr ~= nil and self.code.selection ~= nil then
+        diagnostics = Utils.get_current_selection_diagnostics(self.code.bufnr, self.code.selection)
+      else
+        diagnostics = Utils.get_diagnostics(self.code.bufnr)
+      end
+    end
+
+    local history_messages = {}
+    for i = #chat_history, 1, -1 do
+      local entry = chat_history[i]
+      if entry.reset_memory then break end
+      if
+        entry.request == nil
+        or entry.original_response == nil
+        or entry.request == ""
+        or entry.original_response == ""
+      then
+        break
+      end
+      table.insert(history_messages, 1, { role = "assistant", content = entry.original_response })
+      local user_content = ""
+      if entry.selected_file ~= nil then
+        user_content = user_content .. "SELECTED FILE: " .. entry.selected_file.filepath .. "\n\n"
+      end
+      if entry.selected_code ~= nil then
+        user_content = user_content
+          .. "SELECTED CODE:\n\n```"
+          .. entry.selected_code.filetype
+          .. "\n"
+          .. entry.selected_code.content
+          .. "\n```\n\n"
+      end
+      user_content = user_content .. "USER PROMPT:\n\n" .. entry.request
+      table.insert(history_messages, 1, { role = "user", content = user_content })
+    end
+
+    return {
+      ask = opts.ask,
+      project_context = vim.json.encode(project_context),
+      selected_files = selected_files_contents,
+      diagnostics = vim.json.encode(diagnostics),
+      history_messages = history_messages,
+      code_lang = filetype,
+      selected_code = selected_code_content,
+      instructions = request,
+      mode = "planning",
+    }
+  end
+
+  ---@param request string
   local function handle_submit(request)
     local model = Config.has_provider(Config.provider) and Config.get_provider(Config.provider).model or "default"
 
@@ -1518,9 +1586,6 @@ function Sidebar:create_input_container(opts)
     self:update_content("", { focus = true, scroll = false })
     self:update_content(content_prefix .. generating_text)
 
-    local selected_code_content = nil
-    if self.code.selection ~= nil then selected_code_content = self.code.selection.content end
-
     if request:sub(1, 1) == "/" then
       local command, args = request:match("^/(%S+)%s*(.*)")
       if command == nil then
@@ -1533,17 +1598,7 @@ function Sidebar:create_input_container(opts)
       if cmd then
         if command == "lines" then
           cmd.callback(args, function(args_)
-            local start_line, end_line, question = args_:match("(%d+)-(%d+)%s+(.*)")
-            ---@cast start_line integer
-            start_line = tonumber(start_line)
-            ---@cast end_line integer
-            end_line = tonumber(end_line)
-            if end_line == nil then
-              Utils.error("Invalid end line number", { once = true, title = "Avante" })
-              return
-            end
-            selected_code_content =
-              table.concat(api.nvim_buf_get_lines(self.code.bufnr, start_line - 1, end_line, false), "\n")
+            local _, _, question = args_:match("(%d+)-(%d+)%s+(.*)")
             request = question
           end)
         else
@@ -1632,67 +1687,15 @@ function Sidebar:create_input_container(opts)
       Path.history.save(self.code.bufnr, chat_history)
     end
 
-    local mentions = Utils.extract_mentions(request)
-    request = mentions.new_content
-
-    local file_ext = api.nvim_buf_get_name(self.code.bufnr):match("^.+%.(.+)$")
-
-    local project_context = mentions.enable_project_context and RepoMap.get_repo_map(file_ext) or nil
-
-    local selected_files_contents = self.file_selector:get_selected_files_contents()
-
-    local diagnostics = nil
-    if mentions.enable_diagnostics then
-      if self.code ~= nil and self.code.bufnr ~= nil and self.code.selection ~= nil then
-        diagnostics = Utils.get_current_selection_diagnostics(self.code.bufnr, self.code.selection)
-      else
-        diagnostics = Utils.get_diagnostics(self.code.bufnr)
-      end
-    end
-
-    local history_messages = {}
-    for i = #chat_history, 1, -1 do
-      local entry = chat_history[i]
-      if entry.reset_memory then break end
-      if
-        entry.request == nil
-        or entry.original_response == nil
-        or entry.request == ""
-        or entry.original_response == ""
-      then
-        break
-      end
-      table.insert(history_messages, 1, { role = "assistant", content = entry.original_response })
-      local user_content = ""
-      if entry.selected_file ~= nil then
-        user_content = user_content .. "SELECTED FILE: " .. entry.selected_file.filepath .. "\n\n"
-      end
-      if entry.selected_code ~= nil then
-        user_content = user_content
-          .. "SELECTED CODE:\n\n```"
-          .. entry.selected_code.filetype
-          .. "\n"
-          .. entry.selected_code.content
-          .. "\n```\n\n"
-      end
-      user_content = user_content .. "USER PROMPT:\n\n" .. entry.request
-      table.insert(history_messages, 1, { role = "user", content = user_content })
-    end
-
-    Llm.stream({
-      bufnr = self.code.bufnr,
-      ask = opts.ask,
-      project_context = vim.json.encode(project_context),
-      selected_files = selected_files_contents,
-      diagnostics = vim.json.encode(diagnostics),
-      history_messages = history_messages,
-      code_lang = filetype,
-      selected_code = selected_code_content,
-      instructions = request,
-      mode = "planning",
+    local generate_prompts_options = get_generate_prompts_options(request)
+    ---@type StreamOptions
+    ---@diagnostic disable-next-line: assign-type-mismatch
+    local stream_options = vim.tbl_deep_extend("force", generate_prompts_options, {
       on_chunk = on_chunk,
       on_complete = on_complete,
     })
+
+    Llm.stream(stream_options)
   end
 
   local get_position = function()
@@ -1827,7 +1830,15 @@ function Sidebar:create_input_container(opts)
   local function show_hint()
     close_hint() -- Close the existing hint window
 
-    local hint_text = (fn.mode() ~= "i" and Config.mappings.submit.normal or Config.mappings.submit.insert)
+    local input_value = table.concat(api.nvim_buf_get_lines(self.input_container.bufnr, 0, -1, false), "\n")
+
+    local generate_prompts_options = get_generate_prompts_options(input_value)
+    local tokens = Llm.calculate_tokens(generate_prompts_options)
+
+    local hint_text = "Tokens: "
+      .. tostring(tokens)
+      .. "; "
+      .. (fn.mode() ~= "i" and Config.mappings.submit.normal or Config.mappings.submit.insert)
       .. ": submit"
 
     local buf = api.nvim_create_buf(false, true)
@@ -2050,7 +2061,7 @@ function Sidebar:create_selected_files_container()
 
     local selected_filepaths_with_icon = {}
     for _, filepath in ipairs(selected_filepaths_) do
-      local icon = self:get_file_icon(filepath)
+      local icon = Utils.file.get_file_icon(filepath)
       table.insert(selected_filepaths_with_icon, string.format("%s %s", icon, filepath))
     end
 
